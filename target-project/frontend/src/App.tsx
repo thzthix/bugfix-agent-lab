@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { TodoRow } from "./components/TodoRow";
+import { buildSummary, loadDemoState, persistDemoState } from "./demoStorage";
 
 type TodoItem = {
   id: string;
@@ -17,7 +18,7 @@ type TodoState = {
   };
 };
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
 const initialState: TodoState = {
   items: [],
@@ -30,18 +31,46 @@ const initialState: TodoState = {
 export default function App() {
   const [state, setState] = useState<TodoState>(initialState);
   const [draft, setDraft] = useState("");
+  const [isDemoMode, setIsDemoMode] = useState(false);
 
   useEffect(() => {
     void loadTodos();
   }, []);
 
   async function loadTodos() {
-    const response = await fetch(`${API_BASE_URL}/api/todos`);
-    const nextState: TodoState = await response.json();
-    setState(nextState);
+    if (!API_BASE_URL) {
+      setState(loadDemoState());
+      setIsDemoMode(true);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/todos`);
+      const nextState: TodoState = await response.json();
+      setState(nextState);
+      setIsDemoMode(false);
+    } catch {
+      setState(loadDemoState());
+      setIsDemoMode(true);
+    }
   }
 
   async function toggleTodo(id: string) {
+    if (isDemoMode) {
+      setState((currentState) => {
+        const items = currentState.items.map((item) =>
+          item.id === id ? { ...item, completed: !item.completed } : item,
+        );
+        const nextState = {
+          items,
+          summary: buildSummary(items),
+        };
+        persistDemoState(nextState);
+        return nextState;
+      });
+      return;
+    }
+
     const response = await fetch(`${API_BASE_URL}/api/todos/${id}/toggle`, {
       method: "POST",
     });
@@ -50,6 +79,20 @@ export default function App() {
   }
 
   async function favoriteTodo(id: string) {
+    if (isDemoMode) {
+      setState((currentState) => {
+        const nextState = {
+          ...currentState,
+          items: currentState.items.map((item) =>
+          item.id === id ? { ...item, is_favorite: !item.is_favorite } : item,
+          ),
+        };
+        persistDemoState(nextState);
+        return nextState;
+      });
+      return;
+    }
+
     const response = await fetch(`${API_BASE_URL}/api/todos/${id}/favorite`, {
       method: "POST",
     });
@@ -60,6 +103,28 @@ export default function App() {
   async function addTodo() {
     const title = draft.trim();
     if (!title) {
+      return;
+    }
+
+    if (isDemoMode) {
+      setState((currentState) => {
+        const items = [
+          {
+            id: String(currentState.items.length + 1),
+            title,
+            completed: false,
+            is_favorite: false,
+          },
+          ...currentState.items,
+        ];
+        const nextState = {
+          items,
+          summary: buildSummary(items),
+        };
+        persistDemoState(nextState);
+        return nextState;
+      });
+      setDraft("");
       return;
     }
 
@@ -79,11 +144,14 @@ export default function App() {
     <main className="page-shell">
       <section className="app-card">
         <header className="app-header">
-          <div className="title-group">
-            <h1>Groceries</h1>
-            <span>
-              {state.summary.completed_count}/{state.summary.total_count}
-            </span>
+          <div className="header-left">
+            <div className="title-group">
+              <h1>Groceries</h1>
+              <span>
+                {state.summary.completed_count}/{state.summary.total_count}
+              </span>
+            </div>
+            {isDemoMode ? <p className="demo-badge">Static demo mode</p> : null}
           </div>
 
           <div className="header-actions" aria-hidden="true">

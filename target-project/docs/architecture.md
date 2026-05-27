@@ -17,6 +17,7 @@ bug-fix agent exercises.
 - React application that renders the grocery list reference UI.
 - Fetches todos and summary information from the backend API.
 - Sends toggle and favorite actions back to the API.
+- Can fall back to local demo data and `localStorage` for static GitHub Pages preview builds.
 
 ### Backend
 
@@ -39,3 +40,9 @@ The external harness is responsible for:
 - exposing read/apply/test tools,
 - enforcing access boundaries,
 - capturing structured results and reports.
+
+## Deployment Note
+
+- GitHub Pages is suitable for the static frontend preview.
+- The FastAPI backend remains a separate runtime target and is not deployed on
+  GitHub Pages.

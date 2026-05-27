@@ -18,11 +18,15 @@ This document is a lightweight index for the target project.
 ## Frontend
 
 - `frontend/src/App.tsx`
-  Page composition, data fetching, and optimistic interaction flow.
+  Page composition, data fetching, and demo fallback flow.
 - `frontend/src/components/TodoRow.tsx`
   Row-level task rendering.
 - `frontend/src/styles.css`
   Visual system and layout for the grocery-list UI.
+- `frontend/src/demoData.ts`
+  Static fallback data for GitHub Pages preview mode.
+- `frontend/src/demoStorage.ts`
+  Local storage helpers used by static demo mode.
 
 ## Exercise Focus
 

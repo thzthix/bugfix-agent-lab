@@ -22,9 +22,12 @@ The UI should closely match the provided grocery-list reference:
 
 ## Layout Notes
 
-- Keep the page visually close to a phone-width list even on desktop.
+- Keep the visual language of the phone reference, but let the main board
+  expand across a much wider desktop canvas.
 - Preserve stacked cards with large corner radii and soft shadows.
 - Use a pale neutral background around the main list surface.
+- On desktop, the list should feel like a spacious app board rather than a
+  narrow phone mockup.
 
 ## Wireframe
 
@@ -52,3 +55,6 @@ The UI should closely match the provided grocery-list reference:
 In practice, teams usually keep a screenshot reference plus a short component
 spec like this one. A simple ASCII wireframe is useful as a supplement, but it
 is not enough by itself for visual fidelity.
+
+For a static preview deployment, it is acceptable to preserve interactions with
+`localStorage` so the UI remains explorable without a live backend.
