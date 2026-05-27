@@ -2,20 +2,30 @@
 
 This document is a lightweight index for the target project.
 
-## Planned Source Areas
+## Backend
 
-- `src/models.py`
-  Domain model definitions for todos and related state.
-- `src/repository.py`
-  Storage and reload behavior for todo data.
-- `src/service.py`
-  Todo business logic such as create, toggle, list, and filter behavior.
+- `backend/app/models.py`
+  Domain models and API-facing data shapes for todo items.
+- `backend/app/repository.py`
+  JSON-backed persistence and reload behavior.
+- `backend/app/service.py`
+  Todo business logic such as create, toggle, favorite, filtering, and summaries.
+- `backend/app/main.py`
+  FastAPI routes used by the frontend.
+- `backend/tests/test_service.py`
+  Behavior verification for the first bug-fix exercise.
 
-## Planned Test Areas
+## Frontend
 
-- `tests/`
-  Behavior verification for the target project.
+- `frontend/src/App.tsx`
+  Page composition, data fetching, and optimistic interaction flow.
+- `frontend/src/components/TodoRow.tsx`
+  Row-level task rendering.
+- `frontend/src/styles.css`
+  Visual system and layout for the grocery-list UI.
 
-The first exercise is expected to focus on completed-state toggle and persistence consistency.
+## Exercise Focus
 
-This file should be updated as concrete implementation files are added.
+The first exercise focuses on completed-state toggle and persistence consistency.
+The expected repair target is primarily in the backend, while the frontend acts
+as a realistic consumer of the API contract.

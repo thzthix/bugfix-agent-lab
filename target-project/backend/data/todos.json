@@ -1,0 +1,58 @@
+{
+  "items": [
+    {
+      "id": "1",
+      "title": "Manuka honey",
+      "completed": "false",
+      "favorite": false
+    },
+    {
+      "id": "2",
+      "title": "Peanut butter",
+      "completed": "true",
+      "favorite": false
+    },
+    {
+      "id": "3",
+      "title": "Extra virgin olive oil",
+      "completed": "true",
+      "favorite": true
+    },
+    {
+      "id": "4",
+      "title": "Blueberries",
+      "completed": "false",
+      "favorite": false
+    },
+    {
+      "id": "5",
+      "title": "Dark chocolate",
+      "completed": "false",
+      "favorite": true
+    },
+    {
+      "id": "6",
+      "title": "Coffee beans",
+      "completed": "true",
+      "favorite": true
+    },
+    {
+      "id": "7",
+      "title": "Whipped cream",
+      "completed": "false",
+      "favorite": false
+    },
+    {
+      "id": "8",
+      "title": "Strawberries",
+      "completed": "true",
+      "favorite": false
+    },
+    {
+      "id": "9",
+      "title": "Organic maple syrup",
+      "completed": "true",
+      "favorite": true
+    }
+  ]
+}

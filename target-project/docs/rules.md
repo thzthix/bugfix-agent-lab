@@ -1,45 +1,34 @@
 # Implementation Rules
 
-## Style and Tooling
+## General
+
+- Keep functions and components short and focused on one responsibility.
+- Prefer explicit state transitions over clever implicit conversions.
+- Keep naming consistent for the same domain concept across backend and frontend.
+- Match the UI reference closely before adding extra styling flourishes.
+
+## Backend
 
 - Follow Python style conventions compatible with `PEP 8`.
 - Keep formatting compatible with `ruff format`.
 - Keep code quality compatible with `ruff check`.
 - Write tests for `pytest`.
+- `models.py` owns domain-level data shapes.
+- `repository.py` owns persistence and reload behavior.
+- `service.py` owns business rules and orchestration.
+- Keep storage-specific field translation inside the repository layer.
+- Keep the completed-state concept canonical and explicit.
 
-## Function Design
+## Frontend
 
-- Keep functions short and focused on one responsibility.
-- Split validation, transformation, and persistence when they start to mix.
-- Avoid deep conditional nesting when a helper function can simplify the flow.
-- Avoid boolean flag parameters that change the meaning of a function.
-
-## Module Responsibilities
-
-- `models.py` defines domain objects and domain-level data shapes.
-- `repository.py` handles persistence and reload behavior.
-- `service.py` handles business logic and orchestration.
-
-## Naming
-
-- Use `snake_case` for functions and variables.
-- Use clear boolean names such as `is_completed` or `has_items`.
-- Do not introduce multiple names for the same domain concept without a clear reason.
+- Use React with small presentational components.
+- Keep component state shallow and derive display state from API data when possible.
+- Centralize visual tokens in CSS custom properties.
+- Prefer semantic buttons and inputs over non-interactive wrappers.
+- Keep layout responsive, but preserve the mobile-card composition from the reference image.
 
 ## Tests
 
 - Tests are the source of truth for task success.
 - Prefer fixes that preserve or clarify the intent of the tests.
 - Do not weaken assertions to make a failing implementation pass.
-
-## Domain Consistency
-
-- Represent the completed state with one clear domain concept and one canonical name.
-- Keep the meaning of completion consistent across models, persistence, and service logic.
-- Avoid parallel fields such as `done`, `completed`, and `is_completed` unless a mapping is explicitly required.
-
-## Persistence Boundaries
-
-- Keep storage-specific field translation inside the repository layer.
-- Keep service logic independent from storage shape details when possible.
-- Make state transitions explicit instead of relying on implicit truthy or falsy conversions.
