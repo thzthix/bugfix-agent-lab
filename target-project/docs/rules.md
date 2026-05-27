@@ -29,23 +29,17 @@
 ## Tests
 
 - Tests are the source of truth for task success.
-- Do not modify test files during the exercise.
+- Prefer fixes that preserve or clarify the intent of the tests.
 - Do not weaken assertions to make a failing implementation pass.
 
-## Access Policy
+## Domain Consistency
 
-- Read approved fix target files first.
-- Read related test files and `pyproject.toml`.
-- Read additional `src/**` files only when necessary to understand the failure.
-- Keep the per-turn reading scope as small as possible.
-- Start from direct evidence such as failing tests, stack traces, and approved fix candidates.
-- Expand to additional source files only when the current evidence is insufficient.
-- Concrete file-count and read-size limits are enforced by the harness.
-- Modify only explicitly approved source files for the current task.
+- Represent the completed state with one clear domain concept and one canonical name.
+- Keep the meaning of completion consistent across models, persistence, and service logic.
+- Avoid parallel fields such as `done`, `completed`, and `is_completed` unless a mapping is explicitly required.
 
-## Exercise Constraints
+## Persistence Boundaries
 
-- Do not modify `tests/**`.
-- Do not modify `pyproject.toml`.
-- Do not modify `docs/**`.
-- Produce a structured JSON result and a human-readable Markdown report at the end of a run.
+- Keep storage-specific field translation inside the repository layer.
+- Keep service logic independent from storage shape details when possible.
+- Make state transitions explicit instead of relying on implicit truthy or falsy conversions.
