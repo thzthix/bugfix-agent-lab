@@ -1,86 +1,71 @@
-from __future__ import annotations
-
 import json
-from typing import Any
+import subprocess
+from pathlib import Path
+
+from google.genai import types
+
+from harness.tool_utils import (
+    default_apply_patch,
+    extract_patch_files,
+    is_allowed_read_path,
+)
 
 
-def build_tools() -> list[dict[str, Any]]:
-    return [
-        {
-            "type": "function",
-            "name": "read_file",
-            "description": (
-                "Read a text file from the allowed workspace. "
-                "Optionally read a line range."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "File path relative to the repository root.",
-                    },
-                    "start_line": {
-                        "type": "integer",
-                        "description": "1-based start line. Optional.",
-                    },
-                    "end_line": {
-                        "type": "integer",
-                        "description": "1-based end line. Optional.",
-                    },
-                },
-                "required": ["path"],
-                "additionalProperties": False,
-            },
-        },
-        {
-            "type": "function",
-            "name": "apply_patch",
-            "description": (
-                "Apply a patch string with before/after context. "
-                "The harness rejects edits outside the task allowlist."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "patch": {
-                        "type": "string",
-                        "description": "Patch text to apply.",
-                    }
-                },
-                "required": ["patch"],
-                "additionalProperties": False,
-            },
-        },
-        {
-            "type": "function",
-            "name": "run_tests",
-            "description": (
-                "Run the fixed test command for this task and return stdout, stderr, "
-                "and a short summary."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": False,
-            },
-        },
-    ]
+def read_file_impl(repo_root: Path, path: str) -> str:
+    if not is_allowed_read_path(path):
+        raise ValueError(f"Read path is not allowed: {path}")
+    file_path = repo_root / path
+    return file_path.read_text(encoding="utf-8")
 
 
-def extract_tool_calls(response: Any) -> list[dict[str, Any]]:
-    output_items = getattr(response, "output", [])
-    tool_calls: list[dict[str, Any]] = []
-    for item in output_items:
-        item_type = getattr(item, "type", None)
-        if item_type != "function_call":
-            continue
-        arguments = getattr(item, "arguments", "{}")
-        tool_calls.append(
-            {
-                "call_id": getattr(item, "call_id"),
-                "name": getattr(item, "name"),
-                "arguments": json.loads(arguments),
-            }
-        )
-    return tool_calls
+def apply_patch_impl(patch: str, allowed_files: list[str] | None = None) -> str:
+    touched_files = extract_patch_files(patch)
+    if not touched_files:
+        raise ValueError("Patch does not reference any files.")
+    if allowed_files is not None:
+        disallowed_files = [path for path in touched_files if path not in allowed_files]
+        if disallowed_files:
+            raise ValueError(
+                f"Patch touches files outside the allowlist: {disallowed_files}"
+            )
+    result = default_apply_patch(patch)
+    return json.dumps(result, ensure_ascii=False)
+
+
+def run_tests_impl(repo_root: Path, test_command: str) -> str:
+    completed = subprocess.run(
+        test_command,
+        cwd=repo_root,
+        shell=True,
+        capture_output=True,
+        text=True,
+    )
+    success = completed.returncode == 0
+    result = {
+        "success": success,
+        "command": test_command,
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+        "summary": "passed" if success else "failed",
+    }
+    return json.dumps(result, ensure_ascii=False)
+
+
+def build_gemini_tool_config(
+    repo_root: Path,
+    test_command: str,
+    allowed_files: list[str] | None = None,
+) -> types.GenerateContentConfig:
+    def read_file(path: str) -> str:
+        """Read a text file from the workspace and return its contents."""
+        return read_file_impl(repo_root, path)
+
+    def apply_patch(patch: str) -> str:
+        """Apply a patch proposal and return a JSON summary."""
+        return apply_patch_impl(patch, allowed_files)
+
+    def run_tests() -> str:
+        """Run the configured test command and return a JSON summary."""
+        return run_tests_impl(repo_root, test_command)
+
+    return types.GenerateContentConfig(tools=[read_file, apply_patch, run_tests])
