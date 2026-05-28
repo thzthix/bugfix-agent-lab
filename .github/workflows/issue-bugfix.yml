@@ -125,10 +125,10 @@ jobs:
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: feat: 이슈 #${{ github.event.issue.number }} 자동 수정 결과 추가
+          commit-message: "feat: 이슈 #${{ github.event.issue.number }} 자동 수정 결과 추가"
           branch: automation/issue-${{ github.event.issue.number }}-bugfix
           delete-branch: true
-          title: fix: resolve issue #${{ github.event.issue.number }}
+          title: "fix: resolve issue #${{ github.event.issue.number }}"
           body: |
             Closes #${{ github.event.issue.number }}
 
