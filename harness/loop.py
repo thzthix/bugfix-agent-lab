@@ -2,170 +2,24 @@ from __future__ import annotations
 
 import json
 import subprocess
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable
 
-from harness.allowlist import (
-    build_task_input,
-    extract_error_paths,
-    load_text,
-    resolve_allowed_files,
+from harness.config import (
+    HarnessLoopError,
+    LoopConfig,
+    LoopContext,
+    LoopResult,
+    ToolExecutionResult,
 )
-
-
-DEFAULT_MODEL = "gpt-5.5"
-DEFAULT_MAX_ATTEMPTS = 3
-DEFAULT_TEST_COMMAND = (
-    "python3 -m pytest target-project/backend/tests/test_service.py "
-    "target-project/backend/tests/test_api.py"
+from harness.decisions import handle_test_result
+from harness.response_api import build_instructions
+from harness.task import build_loop_context
+from harness.tools import build_tools, extract_tool_calls
+from harness.tool_utils import (
+    default_apply_patch,
+    extract_patch_files,
+    is_allowed_read_path,
 )
-DEFAULT_ALLOWED_READ_PREFIXES = (
-    "target-project/backend/",
-    "target-project/docs/",
-    "target-project/AGENTS.md",
-)
-
-
-class HarnessLoopError(RuntimeError):
-    """Raised when the harness loop cannot proceed."""
-
-
-@dataclass
-class LoopConfig:
-    repo_root: Path
-    model: str = DEFAULT_MODEL
-    max_attempts: int = DEFAULT_MAX_ATTEMPTS
-    test_command: str = DEFAULT_TEST_COMMAND
-
-
-@dataclass
-class LoopContext:
-    issue_text: str
-    error_paths: list[str]
-    allowed_files: list[str]
-    task_input: str
-    relevant_tests: list[str]
-
-
-@dataclass
-class ToolExecutionResult:
-    tool_name: str
-    output: dict[str, Any]
-
-
-@dataclass
-class LoopResult:
-    success: bool
-    attempts: int
-    allowed_files: list[str]
-    final_response_id: str | None
-    last_test_summary: str | None
-    tool_history: list[ToolExecutionResult]
-
-
-def build_loop_context(
-    issue_text: str,
-    repo_root: Path,
-) -> LoopContext:
-    code_map_text = load_text(repo_root / "target-project/docs/code-map.md")
-    agents_text = load_text(repo_root / "target-project/AGENTS.md")
-    error_paths = extract_error_paths(issue_text)
-    allowed_files = resolve_allowed_files(error_paths, code_map_text, agents_text)
-    task_input = build_task_input(issue_text, allowed_files)
-    relevant_tests = [
-        "target-project/backend/tests/test_service.py",
-        "target-project/backend/tests/test_api.py",
-    ]
-    return LoopContext(
-        issue_text=issue_text,
-        error_paths=error_paths,
-        allowed_files=allowed_files,
-        task_input=task_input,
-        relevant_tests=relevant_tests,
-    )
-
-
-def build_tools() -> list[dict[str, Any]]:
-    return [
-        {
-            "type": "function",
-            "name": "read_file",
-            "description": (
-                "Read a text file from the allowed workspace. "
-                "Optionally read a line range."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "File path relative to the repository root.",
-                    },
-                    "start_line": {
-                        "type": "integer",
-                        "description": "1-based start line. Optional.",
-                    },
-                    "end_line": {
-                        "type": "integer",
-                        "description": "1-based end line. Optional.",
-                    },
-                },
-                "required": ["path"],
-                "additionalProperties": False,
-            },
-        },
-        {
-            "type": "function",
-            "name": "apply_patch",
-            "description": (
-                "Apply a patch string with before/after context. "
-                "The harness rejects edits outside the task allowlist."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "patch": {
-                        "type": "string",
-                        "description": "Patch text to apply.",
-                    }
-                },
-                "required": ["patch"],
-                "additionalProperties": False,
-            },
-        },
-        {
-            "type": "function",
-            "name": "run_tests",
-            "description": (
-                "Run the fixed test command for this task and return stdout, stderr, "
-                "and a short summary."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": False,
-            },
-        },
-    ]
-
-
-def build_instructions() -> str:
-    return (
-        "You are a coding agent working on a constrained bug-fix task.\n\n"
-        "Goal:\n"
-        "Fix the bug and make all tests pass.\n\n"
-        "Constraints:\n"
-        "Use only the provided tools.\n"
-        "Modify only files that are explicitly allowed for the current task.\n\n"
-        "Stop conditions:\n"
-        "Finish when all tests pass.\n"
-        "Fail if the tests still do not pass after 3 attempts.\n\n"
-        "Final output:\n"
-        "Return a structured report describing the error cause, attempted "
-        "approaches, alternatives considered, chosen approach and why, the "
-        "concrete changes made, and the final result."
-    )
 
 
 class HarnessLoop:
@@ -177,7 +31,7 @@ class HarnessLoop:
     ) -> None:
         self._client = client
         self._config = config
-        self._apply_patch_fn = apply_patch_fn or _default_apply_patch
+        self._apply_patch_fn = apply_patch_fn or default_apply_patch
 
     def run(self, issue_text: str) -> LoopResult:
         context = build_loop_context(issue_text, self._config.repo_root)
@@ -375,7 +229,7 @@ class HarnessLoop:
         start_line: int | None = None,
         end_line: int | None = None,
     ) -> dict[str, Any]:
-        if not _is_allowed_read_path(path):
+        if not is_allowed_read_path(path):
             raise HarnessLoopError(f"Read path is not allowed: {path}")
         file_path = self._config.repo_root / path
         lines = file_path.read_text(encoding="utf-8").splitlines()
@@ -403,7 +257,7 @@ class HarnessLoop:
         patch_text: str,
         allowed_files: list[str],
     ) -> dict[str, Any]:
-        touched_files = _extract_patch_files(patch_text)
+        touched_files = extract_patch_files(patch_text)
         if not touched_files:
             raise HarnessLoopError("Patch does not reference any files.")
         disallowed_files = [path for path in touched_files if path not in allowed_files]
@@ -430,60 +284,3 @@ class HarnessLoop:
             "stderr": completed.stderr,
             "summary": summary,
         }
-
-
-def handle_test_result(
-    tool_execution_results: list[ToolExecutionResult],
-) -> str:
-    for result in tool_execution_results:
-        if result.tool_name != "run_tests":
-            continue
-
-        if result.output["success"]:
-            return "passed"
-        return "failed"
-
-    return "continue"
-
-
-def extract_tool_calls(response: Any) -> list[dict[str, Any]]:
-    output_items = getattr(response, "output", [])
-    tool_calls: list[dict[str, Any]] = []
-    for item in output_items:
-        item_type = getattr(item, "type", None)
-        if item_type != "function_call":
-            continue
-        arguments = getattr(item, "arguments", "{}")
-        tool_calls.append(
-            {
-                "call_id": getattr(item, "call_id"),
-                "name": getattr(item, "name"),
-                "arguments": json.loads(arguments),
-            }
-        )
-    return tool_calls
-
-
-def _extract_patch_files(patch_text: str) -> list[str]:
-    files: list[str] = []
-    for line in patch_text.splitlines():
-        if line.startswith("+++ b/"):
-            files.append(line.removeprefix("+++ b/").strip())
-    return list(dict.fromkeys(files))
-
-
-def _is_allowed_read_path(path: str) -> bool:
-    return any(
-        path == prefix.rstrip("/") or path.startswith(prefix)
-        for prefix in DEFAULT_ALLOWED_READ_PREFIXES
-    )
-
-
-def _default_apply_patch(patch_text: str) -> dict[str, Any]:
-    touched_files = _extract_patch_files(patch_text)
-    return {
-        "success": True,
-        "modified_files": touched_files,
-        "summary": "Patch accepted by the harness apply function.",
-        "patch": patch_text,
-    }

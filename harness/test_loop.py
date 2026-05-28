@@ -6,16 +6,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from harness.loop import (
+from harness.config import (
     DEFAULT_TEST_COMMAND,
-    HarnessLoop,
     HarnessLoopError,
     LoopConfig,
-    build_loop_context,
-    build_instructions,
-    build_tools,
-    handle_test_result,
 )
+from harness.decisions import handle_test_result
+from harness.loop import HarnessLoop
+from harness.response_api import build_instructions
+from harness.task import build_loop_context
+from harness.tools import build_tools
 
 
 @dataclass
