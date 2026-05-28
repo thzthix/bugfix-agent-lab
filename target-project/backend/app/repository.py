@@ -34,5 +34,5 @@ class TodoRepository:
             "id": item.id,
             "title": item.title,
             "completed": "true" if item.completed else "false",
-            "favorite": item.is_favorite,
+            "favorite": False,
         }

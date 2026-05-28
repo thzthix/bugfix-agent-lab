@@ -48,3 +48,16 @@ def test_initial_reload_keeps_false_values_false(tmp_path: Path) -> None:
     state = service.get_state()
 
     assert state.items[0].completed is False
+
+
+def test_toggle_favorite_persists_after_reload(tmp_path: Path) -> None:
+    data_file = tmp_path / "todos.json"
+    _write_seed(data_file)
+
+    service = TodoService(TodoRepository(data_file))
+
+    toggled_state = service.toggle_favorite("1")
+    reloaded_state = service.get_state()
+
+    assert toggled_state.items[0].is_favorite is True
+    assert reloaded_state.items[0].is_favorite is True
