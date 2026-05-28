@@ -1,0 +1,189 @@
+name: Run bugfix harness for GitHub issues
+
+on:
+  issues:
+    types:
+      - opened
+      - reopened
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: issue-bugfix-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  bugfix:
+    runs-on: ubuntu-latest
+    env:
+      OUTPUT_DIR: /tmp/harness-output
+      ISSUE_FILE: /tmp/harness-issue.txt
+      STDOUT_FILE: /tmp/harness-stdout.txt
+      STDERR_FILE: /tmp/harness-stderr.txt
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: python -m pip install -e .
+
+      - name: Write issue text
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
+          issue = event["issue"]
+          title = issue.get("title", "").strip()
+          body = (issue.get("body") or "").strip()
+          text = title if not body else f"{title}\n\n{body}"
+          Path(os.environ["ISSUE_FILE"]).write_text(text, encoding="utf-8")
+          PY
+
+      - name: Run harness
+        id: harness
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          set +e
+          python -m harness.gemini_main \
+            --repo-root . \
+            --issue-file "$ISSUE_FILE" \
+            --output-dir "$OUTPUT_DIR" \
+            > "$STDOUT_FILE" 2> "$STDERR_FILE"
+          exit_code=$?
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Read harness result
+        id: result
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          output_path = Path(os.environ["OUTPUT_DIR"])
+          result_path = output_path / "result.json"
+          stdout_path = Path(os.environ["STDOUT_FILE"])
+          stderr_path = Path(os.environ["STDERR_FILE"])
+          github_output = Path(os.environ["GITHUB_OUTPUT"])
+
+          has_result = result_path.exists()
+          success = False
+          summary = ""
+          report_excerpt = ""
+
+          if has_result:
+              payload = json.loads(result_path.read_text(encoding="utf-8"))
+              success = bool(payload.get("success", False))
+              summary = str(payload.get("summary", "")).strip()
+              report_text = str(payload.get("report_markdown", "")).strip()
+              report_excerpt = "\n".join(report_text.splitlines()[:12]).strip()
+
+          if not summary:
+              stderr_text = stderr_path.read_text(encoding="utf-8").strip() if stderr_path.exists() else ""
+              stdout_text = stdout_path.read_text(encoding="utf-8").strip() if stdout_path.exists() else ""
+              summary = stderr_text or stdout_text or "Harness did not produce a result."
+
+          with github_output.open("a", encoding="utf-8") as fh:
+              fh.write(f"has_result={'true' if has_result else 'false'}\n")
+              fh.write(f"success={'true' if success else 'false'}\n")
+              fh.write("summary<<EOF\n")
+              fh.write(summary + "\n")
+              fh.write("EOF\n")
+              fh.write("report_excerpt<<EOF\n")
+              fh.write(report_excerpt + "\n")
+              fh.write("EOF\n")
+          PY
+
+      - name: Upload harness artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-${{ github.event.issue.number }}-harness-output
+          path: |
+            /tmp/harness-output
+            /tmp/harness-stdout.txt
+            /tmp/harness-stderr.txt
+            /tmp/harness-issue.txt
+          if-no-files-found: warn
+
+      - name: Create fix pull request
+        id: cpr
+        if: steps.result.outputs.success == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: feat: 이슈 #${{ github.event.issue.number }} 자동 수정 결과 추가
+          branch: automation/issue-${{ github.event.issue.number }}-bugfix
+          delete-branch: true
+          title: fix: resolve issue #${{ github.event.issue.number }}
+          body: |
+            Closes #${{ github.event.issue.number }}
+
+            ## 자동 수정 요약
+            ${{ steps.result.outputs.summary }}
+
+            ## 참고
+            - 이 PR은 Gemini 하네스가 자동 생성했습니다.
+            - 자세한 실행 로그와 산출물은 workflow artifact를 확인하세요.
+
+      - name: Comment success on issue
+        if: steps.result.outputs.success == 'true'
+        uses: actions/github-script@v7
+        env:
+          PR_URL: ${{ steps.cpr.outputs.pull-request-url }}
+          SUMMARY: ${{ steps.result.outputs.summary }}
+        with:
+          script: |
+            const prUrl = process.env.PR_URL;
+            const summary = process.env.SUMMARY || '자동 수정이 완료되었습니다.';
+            const body = prUrl
+              ? `자동 수정 PR을 만들었습니다.\n\n- PR: ${prUrl}\n- Summary: ${summary}`
+              : `자동 수정은 성공했지만 커밋할 변경이 없어서 PR은 생성되지 않았습니다.\n\n- Summary: ${summary}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
+      - name: Comment failure on issue
+        if: steps.result.outputs.success != 'true'
+        uses: actions/github-script@v7
+        env:
+          SUMMARY: ${{ steps.result.outputs.summary }}
+          REPORT_EXCERPT: ${{ steps.result.outputs.report_excerpt }}
+          EXIT_CODE: ${{ steps.harness.outputs.exit_code }}
+        with:
+          script: |
+            const summary = process.env.SUMMARY || '자동 수정이 실패했습니다.';
+            const reportExcerpt = (process.env.REPORT_EXCERPT || '').trim();
+            const exitCode = process.env.EXIT_CODE || '1';
+            const lines = [
+              '자동 수정 실행이 성공적으로 끝나지 않았습니다.',
+              '',
+              `- Exit code: ${exitCode}`,
+              `- Summary: ${summary}`,
+            ];
+            if (reportExcerpt) {
+              lines.push('', '### Report excerpt', '', reportExcerpt);
+            }
+            lines.push('', '자세한 로그와 산출물은 workflow artifact를 확인해주세요.');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: lines.join('\n'),
+            });
