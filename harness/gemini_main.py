@@ -8,8 +8,13 @@ from harness.artifacts import (
     parse_final_output,
     write_outputs,
 )
-from harness.client import create_client
-from harness.config import DEFAULT_GEMINI_MODEL, DEFAULT_MAX_ATTEMPTS, DEFAULT_TEST_COMMAND
+from harness.client import create_client, generate_content_with_backoff
+from harness.config import (
+    DEFAULT_API_RETRIES,
+    DEFAULT_GEMINI_MODEL,
+    DEFAULT_MAX_ATTEMPTS,
+    DEFAULT_TEST_COMMAND,
+)
 from harness.prompts import build_issue_prompt, build_retry_prompt
 from harness.task import build_loop_context
 from harness.tools import build_gemini_tool_config
@@ -49,6 +54,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=DEFAULT_MAX_ATTEMPTS,
         help="Maximum retry attempts after failed run_tests results.",
+    )
+    parser.add_argument(
+        "--api-retries",
+        type=int,
+        default=DEFAULT_API_RETRIES,
+        help="Maximum Gemini API retries when retryDelay is returned.",
     )
     return parser.parse_args()
 
@@ -91,20 +102,24 @@ def main() -> int:
         allowed_files=allowed_files,
     )
     if context is None:
-        response = client.models.generate_content(
+        response = generate_content_with_backoff(
+            client,
             model=args.model,
             contents=prompt,
             config=config,
+            max_retries=args.api_retries,
         )
         print(response.text)
         return 0
 
     result = None
     for attempt in range(1, args.max_attempts + 1):
-        response = client.models.generate_content(
+        response = generate_content_with_backoff(
+            client,
             model=args.model,
             contents=prompt,
             config=config,
+            max_retries=args.api_retries,
         )
         result = parse_final_output(response.text or "")
         retry_context = build_retry_context(

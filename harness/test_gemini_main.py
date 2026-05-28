@@ -5,6 +5,7 @@ import json
 import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from google.genai import types
 
@@ -14,6 +15,7 @@ from harness.artifacts import (
     parse_final_output,
     write_outputs,
 )
+from harness.client import extract_retry_delay_seconds, generate_content_with_backoff
 from harness.gemini_main import read_issue_text, read_prompt
 from harness.prompts import build_issue_prompt, build_retry_prompt
 from harness.tools import (
@@ -25,6 +27,69 @@ from harness.tools import (
 
 
 class GeminiMainTests(unittest.TestCase):
+    def test_extract_retry_delay_seconds_reads_retry_info(self) -> None:
+        class FakeClientError(Exception):
+            def __init__(self) -> None:
+                self.details = [{"retryDelay": "9s"}]
+
+            def __str__(self) -> str:
+                return "429 RESOURCE_EXHAUSTED"
+
+        delay = extract_retry_delay_seconds(FakeClientError())
+
+        self.assertEqual(delay, 9.0)
+
+    def test_extract_retry_delay_seconds_falls_back_to_message(self) -> None:
+        class FakeClientError(Exception):
+            def __init__(self) -> None:
+                self.details = []
+
+            def __str__(self) -> str:
+                return "Please retry in 24.5s."
+
+        delay = extract_retry_delay_seconds(FakeClientError())
+
+        self.assertEqual(delay, 24.5)
+
+    def test_generate_content_with_backoff_retries_after_quota_error(self) -> None:
+        class FakeClientError(Exception):
+            def __init__(self) -> None:
+                self.details = [{"retryDelay": "1s"}]
+
+            def __str__(self) -> str:
+                return "429 RESOURCE_EXHAUSTED"
+
+        class FakeModels:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def generate_content(self, **_: object) -> object:
+                self.calls += 1
+                if self.calls == 1:
+                    raise FakeClientError()
+                return {"text": "ok"}
+
+        class FakeClient:
+            def __init__(self) -> None:
+                self.models = FakeModels()
+
+        fake_client = FakeClient()
+        with patch("harness.client.ClientError", FakeClientError), patch(
+            "harness.client.time.sleep"
+        ) as sleep_mock:
+            result = generate_content_with_backoff(
+                fake_client,
+                model="gemini-2.5-flash",
+                contents="hello",
+                config=object(),
+                max_retries=2,
+                default_delay_seconds=0.1,
+            )
+
+        self.assertEqual(result, {"text": "ok"})
+        self.assertEqual(fake_client.models.calls, 2)
+        sleep_mock.assert_called_once_with(1.0)
+
     def test_read_prompt_uses_explicit_prompt(self) -> None:
         self.assertEqual(read_prompt("hello"), "hello")
 
