@@ -75,11 +75,10 @@ def extract_error_summary(issue_text: str) -> str:
 def resolve_allowed_files(
     error_paths: list[str],
     code_map_text: str,
-    agents_text: str,
     allowed_prefixes: tuple[str, ...] = DEFAULT_ALLOWED_PREFIXES,
 ) -> list[str]:
     mapped_paths = _match_paths_from_code_map(error_paths, code_map_text)
-    fallback_paths = _extract_fallback_files(agents_text)
+    fallback_paths = list(DEFAULT_FALLBACK_FILES)
     directly_allowed_paths = [
         path for path in error_paths if _is_allowed_path(path, allowed_prefixes)
     ]
@@ -142,14 +141,6 @@ def _match_paths_from_code_map(error_paths: list[str], code_map_text: str) -> li
             if "test_" in error_name and candidate_stem in error_stem:
                 matched_paths.append(candidate)
     return _dedupe_preserving_order(matched_paths)
-
-
-def _extract_fallback_files(agents_text: str) -> list[str]:
-    return [
-        path
-        for path in _extract_paths(agents_text)
-        if _is_allowed_path(path, DEFAULT_ALLOWED_PREFIXES)
-    ] or list(DEFAULT_FALLBACK_FILES)
 
 
 def _extract_paths(text: str) -> list[str]:

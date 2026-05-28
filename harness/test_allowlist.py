@@ -26,16 +26,6 @@ CODE_MAP_TEXT = """
   Behavior verification for the first bug-fix exercise.
 """
 
-AGENTS_TEXT = """
-# Target Project Agent Guide
-
-## Expected Fix Target Candidates
-
-- `backend/app/models.py`
-- `backend/app/repository.py`
-- `backend/app/service.py`
-"""
-
 
 class AllowlistTests(unittest.TestCase):
     def test_extract_error_paths_finds_paths_in_issue_text(self) -> None:
@@ -60,7 +50,7 @@ class AllowlistTests(unittest.TestCase):
             "target-project/backend/app/repository.py",
         ]
 
-        allowed_files = resolve_allowed_files(error_paths, CODE_MAP_TEXT, AGENTS_TEXT)
+        allowed_files = resolve_allowed_files(error_paths, CODE_MAP_TEXT)
 
         self.assertEqual(
             allowed_files,
@@ -74,7 +64,7 @@ class AllowlistTests(unittest.TestCase):
     def test_resolve_allowed_files_uses_fallback_candidates(self) -> None:
         error_paths = ["target-project/backend/tests/test_service.py"]
 
-        allowed_files = resolve_allowed_files(error_paths, CODE_MAP_TEXT, AGENTS_TEXT)
+        allowed_files = resolve_allowed_files(error_paths, CODE_MAP_TEXT)
 
         self.assertIn("target-project/backend/app/models.py", allowed_files)
         self.assertIn("target-project/backend/app/repository.py", allowed_files)
@@ -85,7 +75,6 @@ class AllowlistTests(unittest.TestCase):
             resolve_allowed_files(
                 ["target-project/frontend/src/App.tsx"],
                 CODE_MAP_TEXT,
-                "",
             )
 
     def test_extract_error_summary_prefers_error_line(self) -> None:

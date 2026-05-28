@@ -16,9 +16,8 @@ def build_loop_context(
     repo_root: Path,
 ) -> LoopContext:
     code_map_text = load_text(repo_root / "target-project/docs/code-map.md")
-    agents_text = load_text(repo_root / "target-project/AGENTS.md")
     error_paths = extract_error_paths(issue_text)
-    allowed_files = resolve_allowed_files(error_paths, code_map_text, agents_text)
+    allowed_files = resolve_allowed_files(error_paths, code_map_text)
     task_input = build_task_input(issue_text, allowed_files)
     relevant_tests = [
         "target-project/backend/tests/test_service.py",
