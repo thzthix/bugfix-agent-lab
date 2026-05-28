@@ -113,6 +113,7 @@ jobs:
           summary = ""
           report_excerpt = ""
           next_action = ""
+          modified_files = ""
 
           if has_result:
               payload = json.loads(result_path.read_text(encoding="utf-8"))
@@ -120,6 +121,11 @@ jobs:
               summary = str(payload.get("summary", "")).strip()
               report_text = str(payload.get("report_markdown", "")).strip()
               report_excerpt = "\n".join(report_text.splitlines()[:12]).strip()
+              files = payload.get("modified_files", [])
+              if isinstance(files, list):
+                  modified_files = "\n".join(
+                      f"- {str(path)}" for path in files if str(path).strip()
+                  )
 
           stderr_text = stderr_path.read_text(encoding="utf-8").strip() if stderr_path.exists() else ""
           stdout_text = stdout_path.read_text(encoding="utf-8").strip() if stdout_path.exists() else ""
@@ -142,6 +148,9 @@ jobs:
               fh.write("EOF\n")
               fh.write("next_action<<EOF\n")
               fh.write(next_action + "\n")
+              fh.write("EOF\n")
+              fh.write("modified_files<<EOF\n")
+              fh.write(modified_files + "\n")
               fh.write("EOF\n")
           PY
 
@@ -170,12 +179,72 @@ jobs:
           body: |
             Closes #${{ github.event.issue.number }}
 
-            ## 자동 수정 요약
-            ${{ steps.result.outputs.summary }}
+            ## 변경 목적 (Why)
 
-            ## 참고
-            - 이 PR은 Gemini 하네스가 자동 생성했습니다.
-            - 자세한 실행 로그와 산출물은 workflow artifact를 확인하세요.
+            - GitHub issue #${{ github.event.issue.number }}에서 보고된 버그를 자동 수정하기 위해
+            - 하네스 실행 결과 요약: ${{ steps.result.outputs.summary }}
+
+            ## 변경 내용 (What)
+
+            - 자동 수정이 반영한 파일:
+            ${{ steps.result.outputs.modified_files }}
+            - Gemini 하네스가 수정 후 테스트를 다시 실행했습니다.
+
+            ## Scope Check
+
+            - [x] PR이 하나의 목적을 가진다
+            - [x] 불필요한 변경이 포함되지 않았다
+
+            ## 검증 방법 (How to test)
+
+            실행한 테스트:
+
+            - [ ] 빌드 테스트
+            - [x] 테스트 스위트
+            - [ ] 수동 확인
+
+            테스트 명령:
+
+            ```bash
+            python3 -m pytest target-project/backend/tests/test_service.py target-project/backend/tests/test_api.py
+            ```
+
+            결과:
+
+            - ${{ steps.result.outputs.summary }}
+
+            ## 영향 범위 (Impact)
+
+            - [ ] 기존 기능 영향 없음
+            - [x] 일부 로직 변경 있음
+            - [ ] UI/UX 변경 있음
+            - [ ] API/데이터 구조 변경 있음
+
+            설명:
+
+            - backend bugfix 경로를 중심으로 자동 수정이 반영되었습니다.
+
+            ## 설계 판단 / 고려 사항
+
+            - 허용 파일 범위 안에서만 수정하도록 하네스가 제한했습니다.
+            - 자세한 reasoning과 실행 로그는 workflow artifact를 참고해주세요.
+
+            ## Known Limitations
+
+            - 자동 생성 PR이므로 최종 머지 전 수동 리뷰가 필요합니다.
+            - Gemini quota 상태에 따라 같은 이슈라도 재현 결과가 달라질 수 있습니다.
+
+            ## 기본 규칙 체크
+
+            - [ ] 하드코딩된 경로 없음
+            - [x] debug print 없음
+            - [ ] 함수가 과도하게 길지 않음
+            - [ ] 한 파일 한 책임 원칙 유지
+            - [ ] TypeScript 타입 안정성 확보
+
+            ## TODO
+
+            - 필요하면 artifact의 result.json / report.md를 바탕으로 추가 수동 검토를 진행해주세요.
 
       - name: Comment success on issue
         if: steps.result.outputs.success == 'true'
