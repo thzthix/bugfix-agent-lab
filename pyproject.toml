@@ -1,0 +1,18 @@
+[project]
+name = "bugfix-agent-lab-harness"
+version = "0.1.0"
+description = "Responses API bug-fix harness experiments."
+requires-python = ">=3.11"
+dependencies = [
+    "google-genai>=1.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
