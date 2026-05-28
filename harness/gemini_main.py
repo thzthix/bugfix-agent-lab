@@ -3,10 +3,14 @@ import json
 import sys
 from pathlib import Path
 
-from harness.artifacts import parse_final_output, write_outputs
+from harness.artifacts import (
+    build_retry_context,
+    parse_final_output,
+    write_outputs,
+)
 from harness.client import create_client
-from harness.config import DEFAULT_GEMINI_MODEL, DEFAULT_TEST_COMMAND
-from harness.prompts import build_issue_prompt
+from harness.config import DEFAULT_GEMINI_MODEL, DEFAULT_MAX_ATTEMPTS, DEFAULT_TEST_COMMAND
+from harness.prompts import build_issue_prompt, build_retry_prompt
 from harness.task import build_loop_context
 from harness.tools import build_gemini_tool_config
 
@@ -39,6 +43,12 @@ def parse_args() -> argparse.Namespace:
         "--output-dir",
         default="outputs",
         help="Directory for result.json and report.md when using --issue-file.",
+    )
+    parser.add_argument(
+        "--max-attempts",
+        type=int,
+        default=DEFAULT_MAX_ATTEMPTS,
+        help="Maximum retry attempts after failed run_tests results.",
     )
     return parser.parse_args()
 
@@ -80,17 +90,40 @@ def main() -> int:
         test_command=args.test_command,
         allowed_files=allowed_files,
     )
-    response = client.models.generate_content(
-        model=args.model,
-        contents=prompt,
-        config=config,
-    )
-
     if context is None:
+        response = client.models.generate_content(
+            model=args.model,
+            contents=prompt,
+            config=config,
+        )
         print(response.text)
         return 0
 
-    result = parse_final_output(response.text or "")
+    result = None
+    for attempt in range(1, args.max_attempts + 1):
+        response = client.models.generate_content(
+            model=args.model,
+            contents=prompt,
+            config=config,
+        )
+        result = parse_final_output(response.text or "")
+        retry_context = build_retry_context(
+            response=response,
+            attempt=attempt,
+            max_attempts=args.max_attempts,
+        )
+        if retry_context is None or retry_context.test_summary != "failed":
+            break
+        if attempt >= args.max_attempts:
+            break
+        prompt = build_retry_prompt(context.task_input, retry_context)
+
+    result = result or {
+        "success": False,
+        "summary": "Gemini did not return a result.",
+        "modified_files": [],
+        "report_markdown": "No report was returned.",
+    }
     output_dir = Path(args.output_dir).resolve()
     write_outputs(output_dir, result)
     print(
@@ -104,7 +137,7 @@ def main() -> int:
             indent=2,
         )
     )
-    return 0
+    return 0 if result.get("success", False) else 1
 
 
 if __name__ == "__main__":
