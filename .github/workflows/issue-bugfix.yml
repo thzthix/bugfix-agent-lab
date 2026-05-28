@@ -33,7 +33,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        run: python -m pip install -e .
+        run: python -m pip install google-genai python-dotenv
 
       - name: Write issue text
         run: |
@@ -54,6 +54,7 @@ jobs:
         id: harness
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PYTHONPATH: .
         run: |
           set +e
           python -m harness.gemini_main \
