@@ -11,6 +11,7 @@ from harness.loop import (
     HarnessLoop,
     HarnessLoopError,
     LoopConfig,
+    build_loop_context,
     build_instructions,
     build_tools,
     handle_test_result,
@@ -116,6 +117,63 @@ class LoopTests(unittest.TestCase):
                     ["target-project/backend/app/repository.py"],
                 )
 
+    def test_execute_tool_calls_returns_execution_results_and_response_inputs(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            _seed_repo(repo_root)
+            loop = HarnessLoop(
+                client=FakeClient([]),
+                config=LoopConfig(repo_root=repo_root, test_command=DEFAULT_TEST_COMMAND),
+            )
+
+            execution_results, response_inputs = loop.execute_tool_calls(
+                [
+                    {
+                        "call_id": "call_1",
+                        "name": "read_file",
+                        "arguments": {
+                            "path": "target-project/backend/app/repository.py",
+                        },
+                    }
+                ],
+                context=build_loop_context(
+                    issue_text="Current failure: AssertionError in target-project/backend/tests/test_service.py",
+                    repo_root=repo_root,
+                ),
+            )
+
+        self.assertEqual(len(execution_results), 1)
+        self.assertEqual(execution_results[0].tool_name, "read_file")
+        self.assertEqual(len(response_inputs), 1)
+        self.assertEqual(response_inputs[0]["type"], "function_call_output")
+        self.assertEqual(response_inputs[0]["call_id"], "call_1")
+
+    def test_apply_decision_preserves_last_test_summary_on_continue(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            _seed_repo(repo_root)
+            loop = HarnessLoop(
+                client=FakeClient([]),
+                config=LoopConfig(repo_root=repo_root, test_command=DEFAULT_TEST_COMMAND),
+            )
+            context = build_loop_context(
+                issue_text="Current failure: AssertionError in target-project/backend/tests/test_service.py",
+                repo_root=repo_root,
+            )
+
+            attempts, last_test_summary, result = loop._apply_decision(
+                decision="continue",
+                attempts=1,
+                context=context,
+                previous_response_id="resp_1",
+                current_last_test_summary="failed",
+                tool_history=[],
+            )
+
+        self.assertEqual(attempts, 1)
+        self.assertEqual(last_test_summary, "failed")
+        self.assertIsNone(result)
+
     def test_send_tool_outputs_uses_previous_response_id(self) -> None:
         fake_client = FakeClient(
             [
@@ -153,6 +211,25 @@ class LoopTests(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertEqual(fake_client.responses.calls[1]["previous_response_id"], "resp_1")
+
+    def test_start_response_uses_task_input_for_first_request(self) -> None:
+        fake_client = FakeClient([FakeResponse(id="resp_1", output=[])])
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            _seed_repo(repo_root)
+            loop = HarnessLoop(
+                client=fake_client,
+                config=LoopConfig(repo_root=repo_root, test_command=DEFAULT_TEST_COMMAND),
+            )
+            context = build_loop_context(
+                issue_text="Current failure: AssertionError in target-project/backend/tests/test_service.py",
+                repo_root=repo_root,
+            )
+
+            response = loop.start_response(context=context, previous_response_id=None)
+
+        self.assertEqual(response.id, "resp_1")
+        self.assertEqual(fake_client.responses.calls[0]["input"], context.task_input)
 
 
 def _seed_repo(repo_root: Path) -> None:

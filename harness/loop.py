@@ -187,63 +187,130 @@ class HarnessLoop:
         last_test_summary: str | None = None
 
         while attempts < self._config.max_attempts:
-            response = self._create_response(
-                instructions=build_instructions(),
-                input_text=context.task_input if previous_response_id is None else "",
+            response = self.start_response(
+                context=context,
                 previous_response_id=previous_response_id,
             )
             previous_response_id = getattr(response, "id", None)
 
-            tool_calls = _extract_tool_calls(response)
+            tool_calls = extract_tool_calls(response)
             if not tool_calls:
-                return LoopResult(
-                    success=last_test_summary == "passed",
+                success = last_test_summary == "passed"
+                return self.finish_loop(
+                    success=success,
                     attempts=attempts,
-                    allowed_files=context.allowed_files,
-                    final_response_id=previous_response_id,
+                    context=context,
+                    previous_response_id=previous_response_id,
                     last_test_summary=last_test_summary,
                     tool_history=tool_history,
                 )
 
-            pending_outputs: list[dict[str, Any]] = []
-            tool_execution_results: list[ToolExecutionResult] = []
-
-            for tool_call in tool_calls:
-                result = self._execute_tool(tool_call, context)
-                tool_history.append(result)
-                tool_execution_results.append(result)
-                pending_outputs.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": tool_call["call_id"],
-                        "output": json.dumps(result.output),
-                    }
-                )
+            tool_execution_results, tool_response_inputs = self.execute_tool_calls(
+                tool_calls,
+                context,
+            )
+            tool_history.extend(tool_execution_results)
 
             decision = handle_test_result(tool_execution_results)
-            if decision != "continue":
-                last_test_summary = decision
 
-            previous_response_id = self._send_tool_outputs(
+            previous_response_id = self.send_tool_outputs(
                 previous_response_id,
-                pending_outputs,
+                tool_response_inputs,
             )
 
-            if decision == "passed":
-                return LoopResult(
+            attempts, last_test_summary, loop_result = self._apply_decision(
+                decision=decision,
+                attempts=attempts,
+                context=context,
+                previous_response_id=previous_response_id,
+                current_last_test_summary=last_test_summary,
+                tool_history=tool_history,
+            )
+            if loop_result is not None:
+                return loop_result
+
+        return self.finish_loop(
+            success=False,
+            attempts=attempts,
+            context=context,
+            previous_response_id=previous_response_id,
+            last_test_summary=last_test_summary,
+            tool_history=tool_history,
+        )
+
+    def start_response(
+        self,
+        context: LoopContext,
+        previous_response_id: str | None,
+    ) -> Any:
+        kwargs: dict[str, Any] = {
+            "model": self._config.model,
+            "instructions": build_instructions(),
+            "tools": build_tools(),
+        }
+        if previous_response_id:
+            kwargs["previous_response_id"] = previous_response_id
+        else:
+            kwargs["input"] = context.task_input
+        return self._client.responses.create(**kwargs)
+
+    def send_tool_outputs(
+        self,
+        previous_response_id: str | None,
+        tool_response_inputs: list[dict[str, Any]],
+    ) -> str | None:
+        response = self._client.responses.create(
+            model=self._config.model,
+            previous_response_id=previous_response_id,
+            input=tool_response_inputs,
+            tools=build_tools(),
+        )
+        return getattr(response, "id", None)
+
+    def _apply_decision(
+        self,
+        decision: str,
+        attempts: int,
+        context: LoopContext,
+        previous_response_id: str | None,
+        current_last_test_summary: str | None,
+        tool_history: list[ToolExecutionResult],
+    ) -> tuple[int, str | None, LoopResult | None]:
+        if decision == "continue":
+            return attempts, current_last_test_summary, None
+
+        last_test_summary = decision
+        if decision == "passed":
+            attempts += 1
+            return (
+                attempts,
+                last_test_summary,
+                self.finish_loop(
                     success=True,
-                    attempts=attempts + 1,
-                    allowed_files=context.allowed_files,
-                    final_response_id=previous_response_id,
+                    attempts=attempts,
+                    context=context,
+                    previous_response_id=previous_response_id,
                     last_test_summary=last_test_summary,
                     tool_history=tool_history,
-                )
+                ),
+            )
 
-            if decision == "failed":
-                attempts += 1
+        if decision == "failed":
+            return attempts + 1, last_test_summary, None
 
+        raise HarnessLoopError(f"Unsupported loop decision: {decision}")
+
+    def finish_loop(
+        self,
+        success: bool,
+        attempts: int,
+        context: LoopContext,
+        previous_response_id: str | None,
+        last_test_summary: str | None,
+        tool_history: list[ToolExecutionResult],
+    ) -> LoopResult:
         return LoopResult(
-            success=False,
+            success=success,
             attempts=attempts,
             allowed_files=context.allowed_files,
             final_response_id=previous_response_id,
@@ -251,37 +318,24 @@ class HarnessLoop:
             tool_history=tool_history,
         )
 
-    def _create_response(
+    def execute_tool_calls(
         self,
-        instructions: str,
-        input_text: str,
-        previous_response_id: str | None,
-    ) -> Any:
-        kwargs: dict[str, Any] = {
-            "model": self._config.model,
-            "instructions": instructions,
-            "tools": build_tools(),
-        }
-        if previous_response_id:
-            kwargs["previous_response_id"] = previous_response_id
-        else:
-            kwargs["input"] = input_text
-        return self._client.responses.create(**kwargs)
+        tool_calls: list[dict[str, Any]],
+        context: LoopContext,
+    ) -> tuple[list[ToolExecutionResult], list[dict[str, Any]]]:
+        tool_execution_results: list[ToolExecutionResult] = []
+        tool_response_inputs: list[dict[str, Any]] = []
 
-    def _send_tool_outputs(
-        self,
-        previous_response_id: str | None,
-        tool_outputs: list[dict[str, Any]],
-    ) -> str | None:
-        response = self._client.responses.create(
-            model=self._config.model,
-            previous_response_id=previous_response_id,
-            input=tool_outputs,
-            tools=build_tools(),
-        )
-        return getattr(response, "id", None)
+        for tool_call in tool_calls:
+            result = self._execute_single_tool_call(tool_call, context)
+            tool_execution_results.append(result)
+            tool_response_inputs.append(
+                self._build_tool_response_input(tool_call, result)
+            )
 
-    def _execute_tool(
+        return tool_execution_results, tool_response_inputs
+
+    def _execute_single_tool_call(
         self,
         tool_call: dict[str, Any],
         context: LoopContext,
@@ -303,6 +357,17 @@ class HarnessLoop:
         if name == "run_tests":
             return ToolExecutionResult(tool_name=name, output=self._run_tests())
         raise HarnessLoopError(f"Unsupported tool call: {name}")
+
+    def _build_tool_response_input(
+        self,
+        tool_call: dict[str, Any],
+        result: ToolExecutionResult,
+    ) -> dict[str, Any]:
+        return {
+            "type": "function_call_output",
+            "call_id": tool_call["call_id"],
+            "output": json.dumps(result.output),
+        }
 
     def _read_file(
         self,
@@ -381,7 +446,7 @@ def handle_test_result(
     return "continue"
 
 
-def _extract_tool_calls(response: Any) -> list[dict[str, Any]]:
+def extract_tool_calls(response: Any) -> list[dict[str, Any]]:
     output_items = getattr(response, "output", [])
     tool_calls: list[dict[str, Any]] = []
     for item in output_items:
