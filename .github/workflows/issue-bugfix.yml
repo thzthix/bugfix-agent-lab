@@ -74,6 +74,34 @@ jobs:
           import os
           from pathlib import Path
 
+          def extract_failure_reason(text: str) -> str:
+              lines = [line.strip() for line in text.splitlines() if line.strip()]
+              if not lines:
+                  return "Harness did not produce a result."
+              for line in reversed(lines):
+                  lowered = line.lower()
+                  if "resource_exhausted" in lowered or "quota exceeded" in lowered:
+                      return "Gemini API quota was exceeded before the fix flow could complete."
+                  if "assertionerror" in lowered or "traceback" in lowered:
+                      return line
+                  if "error" in lowered or "exception" in lowered:
+                      return line
+              return lines[-1]
+
+          def build_log_excerpt(text: str, limit: int = 12) -> str:
+              lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+              if not lines:
+                  return ""
+              return "\n".join(lines[-limit:])
+
+          def suggest_next_action(text: str) -> str:
+              lowered = text.lower()
+              if "resource_exhausted" in lowered or "quota exceeded" in lowered:
+                  return "Wait for the Gemini free-tier retry window or raise the API quota/billing limit, then rerun the issue."
+              if "gemini_api_key" in lowered:
+                  return "Check the GEMINI_API_KEY repository secret and rerun the issue."
+              return "Review the workflow artifact logs, then retry the issue after updating the harness or environment."
+
           output_path = Path(os.environ["OUTPUT_DIR"])
           result_path = output_path / "result.json"
           stdout_path = Path(os.environ["STDOUT_FILE"])
@@ -84,6 +112,7 @@ jobs:
           success = False
           summary = ""
           report_excerpt = ""
+          next_action = ""
 
           if has_result:
               payload = json.loads(result_path.read_text(encoding="utf-8"))
@@ -92,10 +121,15 @@ jobs:
               report_text = str(payload.get("report_markdown", "")).strip()
               report_excerpt = "\n".join(report_text.splitlines()[:12]).strip()
 
+          stderr_text = stderr_path.read_text(encoding="utf-8").strip() if stderr_path.exists() else ""
+          stdout_text = stdout_path.read_text(encoding="utf-8").strip() if stdout_path.exists() else ""
+          combined_output = stderr_text or stdout_text
+
           if not summary:
-              stderr_text = stderr_path.read_text(encoding="utf-8").strip() if stderr_path.exists() else ""
-              stdout_text = stdout_path.read_text(encoding="utf-8").strip() if stdout_path.exists() else ""
-              summary = stderr_text or stdout_text or "Harness did not produce a result."
+              summary = extract_failure_reason(combined_output)
+          if not report_excerpt:
+              report_excerpt = build_log_excerpt(combined_output)
+          next_action = suggest_next_action(combined_output)
 
           with github_output.open("a", encoding="utf-8") as fh:
               fh.write(f"has_result={'true' if has_result else 'false'}\n")
@@ -105,6 +139,9 @@ jobs:
               fh.write("EOF\n")
               fh.write("report_excerpt<<EOF\n")
               fh.write(report_excerpt + "\n")
+              fh.write("EOF\n")
+              fh.write("next_action<<EOF\n")
+              fh.write(next_action + "\n")
               fh.write("EOF\n")
           PY
 
@@ -151,8 +188,25 @@ jobs:
             const prUrl = process.env.PR_URL;
             const summary = process.env.SUMMARY || '자동 수정이 완료되었습니다.';
             const body = prUrl
-              ? `자동 수정 PR을 만들었습니다.\n\n- PR: ${prUrl}\n- Summary: ${summary}`
-              : `자동 수정은 성공했지만 커밋할 변경이 없어서 PR은 생성되지 않았습니다.\n\n- Summary: ${summary}`;
+              ? [
+                  '자동 수정이 완료되어 PR을 만들었습니다.',
+                  '',
+                  '### 결과 요약',
+                  summary,
+                  '',
+                  '### 생성된 PR',
+                  `- ${prUrl}`,
+                  '',
+                  '필요하면 artifact에서 자세한 실행 로그를 확인해주세요.',
+                ].join('\n')
+              : [
+                  '자동 수정은 성공했지만 커밋할 변경이 없어서 PR은 생성되지 않았습니다.',
+                  '',
+                  '### 결과 요약',
+                  summary,
+                  '',
+                  'artifact에서 자세한 실행 로그를 확인해주세요.',
+                ].join('\n');
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -166,20 +220,29 @@ jobs:
         env:
           SUMMARY: ${{ steps.result.outputs.summary }}
           REPORT_EXCERPT: ${{ steps.result.outputs.report_excerpt }}
+          NEXT_ACTION: ${{ steps.result.outputs.next_action }}
           EXIT_CODE: ${{ steps.harness.outputs.exit_code }}
         with:
           script: |
-            const summary = process.env.SUMMARY || '자동 수정이 실패했습니다.';
+            const summary = process.env.SUMMARY || '자동 수정이 완료되지 않았습니다.';
             const reportExcerpt = (process.env.REPORT_EXCERPT || '').trim();
+            const nextAction = process.env.NEXT_ACTION || 'artifact 로그를 확인한 뒤 다시 시도해주세요.';
             const exitCode = process.env.EXIT_CODE || '1';
             const lines = [
-              '자동 수정 실행이 성공적으로 끝나지 않았습니다.',
+              '자동 수정이 완료되지 않았습니다.',
               '',
+              '### 실패 이유',
+              summary,
+              '',
+              '### 실행 상태',
               `- Exit code: ${exitCode}`,
-              `- Summary: ${summary}`,
+              `- Workflow run: ${context.runId}`,
+              '',
+              '### 다음 액션',
+              nextAction,
             ];
             if (reportExcerpt) {
-              lines.push('', '### Report excerpt', '', reportExcerpt);
+              lines.push('', '### 로그 요약', '', '```text', reportExcerpt, '```');
             }
             lines.push('', '자세한 로그와 산출물은 workflow artifact를 확인해주세요.');
             await github.rest.issues.createComment({

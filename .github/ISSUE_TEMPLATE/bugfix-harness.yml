@@ -1,0 +1,62 @@
+name: Bugfix Harness Request
+description: Ask the Gemini bugfix harness to investigate and repair a failing backend issue.
+title: "[bugfix] <one-line failure summary>"
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template when you want the bugfix harness to work on a code issue.
+
+        Tips:
+        - Keep the failure summary to one sentence.
+        - Include exact file paths when you know them.
+        - Prefer backend test paths such as `target-project/backend/tests/test_service.py`.
+
+  - type: textarea
+    id: current-failure
+    attributes:
+      label: Current failure
+      description: A single sentence that describes the failing behavior or assertion.
+      placeholder: |
+        Current failure: AssertionError: completed-state persistence is inconsistent after reload.
+    validations:
+      required: true
+
+  - type: textarea
+    id: failing-tests
+    attributes:
+      label: Failing tests or stack-trace paths
+      description: Add exact failing test paths or stack-trace file paths, one per line.
+      placeholder: |
+        target-project/backend/tests/test_service.py
+        target-project/backend/app/repository.py
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed-behavior
+    attributes:
+      label: Observed behavior
+      description: Briefly describe what you expected and what actually happened.
+      placeholder: |
+        Expected completed todos to stay completed after reload.
+        Actually, completed state resets after the repository reload path runs.
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra-context
+    attributes:
+      label: Extra context
+      description: Optional notes, screenshots, logs, or suspected files.
+      placeholder: |
+        Suspected file:
+        target-project/backend/app/service.py
+
+        Optional notes:
+        - Happens after toggling one todo and refreshing.
+        - Frontend is only a consumer; backend fix is preferred.
+    validations:
+      required: false
