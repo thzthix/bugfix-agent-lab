@@ -25,7 +25,7 @@ class TodoRepository:
         return TodoItem(
             id=raw_item["id"],
             title=raw_item["title"],
-            completed=bool(raw_item["completed"]),
+            completed=raw_item["completed"] == "true",
             is_favorite=bool(raw_item.get("favorite", False)),
         )
 
