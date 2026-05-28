@@ -2,14 +2,20 @@ from __future__ import annotations
 
 import unittest
 import json
+import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from google.genai import types
 
-from harness.artifacts import parse_final_output, write_outputs
+from harness.artifacts import (
+    RetryContext,
+    build_retry_context,
+    parse_final_output,
+    write_outputs,
+)
 from harness.gemini_main import read_issue_text, read_prompt
-from harness.prompts import build_issue_prompt
+from harness.prompts import build_issue_prompt, build_retry_prompt
 from harness.tools import (
     apply_patch_impl,
     build_gemini_tool_config,
@@ -53,12 +59,31 @@ class GeminiMainTests(unittest.TestCase):
 
         self.assertEqual(content, expected)
 
-    def test_apply_patch_impl_returns_json_summary(self) -> None:
-        result = apply_patch_impl(
-            "--- a/x.py\n+++ b/target-project/backend/app/repository.py\n@@\n-old\n+new\n"
-        )
+    def test_apply_patch_impl_applies_patch_after_check(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir)
+            subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True)
+            target_dir = repo_root / "target-project" / "backend" / "app"
+            target_dir.mkdir(parents=True)
+            target_file = target_dir / "repository.py"
+            target_file.write_text("old\n", encoding="utf-8")
+            patch = (
+                "--- a/target-project/backend/app/repository.py\n"
+                "+++ b/target-project/backend/app/repository.py\n"
+                "@@ -1 +1 @@\n"
+                "-old\n"
+                "+new\n"
+            )
+
+            result = apply_patch_impl(
+                repo_root,
+                patch,
+                ["target-project/backend/app/repository.py"],
+            )
+            file_text = target_file.read_text(encoding="utf-8")
 
         self.assertIn("modified_files", result)
+        self.assertEqual(file_text, "new\n")
 
     def test_run_tests_impl_returns_json_summary(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -84,6 +109,77 @@ class GeminiMainTests(unittest.TestCase):
         self.assertIn("Current task:\nFailure", prompt)
         self.assertIn("report_markdown", prompt)
         self.assertIn("Chosen Approach", prompt)
+
+    def test_build_retry_prompt_mentions_last_failure(self) -> None:
+        retry_context = RetryContext(
+            attempt=1,
+            max_attempts=3,
+            test_command="python3 -m pytest",
+            modified_files=["target-project/backend/app/repository.py"],
+            test_summary="failed",
+            failure_excerpt="AssertionError: completed-state persistence failed.",
+        )
+
+        prompt = build_retry_prompt("Current task:\nFailure", retry_context)
+
+        self.assertIn("Attempt: 1 of 3", prompt)
+        self.assertIn("target-project/backend/app/repository.py", prompt)
+        self.assertIn("AssertionError: completed-state persistence failed.", prompt)
+
+    def test_build_retry_context_reads_last_tool_outputs(self) -> None:
+        class FunctionResponse:
+            def __init__(self, name: str, response: dict[str, object]) -> None:
+                self.name = name
+                self.response = response
+
+        class Part:
+            def __init__(self, function_response: FunctionResponse) -> None:
+                self.function_response = function_response
+
+        class Content:
+            def __init__(self, parts: list[Part]) -> None:
+                self.parts = parts
+
+        class Response:
+            def __init__(self) -> None:
+                self.automatic_function_calling_history = [
+                    Content(
+                        [
+                            Part(
+                                FunctionResponse(
+                                    "apply_patch",
+                                    {
+                                        "modified_files": [
+                                            "target-project/backend/app/repository.py"
+                                        ]
+                                    },
+                                )
+                            )
+                        ]
+                    ),
+                    Content(
+                        [
+                            Part(
+                                FunctionResponse(
+                                    "run_tests",
+                                    {
+                                        "command": "python3 -m pytest",
+                                        "summary": "failed",
+                                        "stderr": "AssertionError: completed-state persistence failed.",
+                                        "stdout": "",
+                                    },
+                                )
+                            )
+                        ]
+                    ),
+                ]
+
+        retry_context = build_retry_context(Response(), attempt=1, max_attempts=3)
+
+        self.assertIsNotNone(retry_context)
+        self.assertEqual(retry_context.modified_files, ["target-project/backend/app/repository.py"])
+        self.assertEqual(retry_context.test_command, "python3 -m pytest")
+        self.assertEqual(retry_context.test_summary, "failed")
 
     def test_parse_final_output_accepts_json(self) -> None:
         payload = parse_final_output(
