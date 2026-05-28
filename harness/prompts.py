@@ -4,6 +4,9 @@ from harness.artifacts import RetryContext
 def build_issue_prompt(task_input: str) -> str:
     return (
         f"{task_input}\n\n"
+        "Allowed files have already been restricted by the harness. "
+        "If you need more structure about file responsibilities, consult "
+        "target-project/docs/code-map.md.\n\n"
         "When you are finished, output only valid JSON with the following keys:\n"
         "- success: boolean\n"
         "- summary: short string\n"
@@ -24,6 +27,9 @@ def build_retry_prompt(task_input: str, retry_context: RetryContext) -> str:
     ) or "  - (none)"
     return (
         f"{task_input}\n\n"
+        "Allowed files have already been restricted by the harness. "
+        "If you need more structure about file responsibilities, consult "
+        "target-project/docs/code-map.md.\n\n"
         "Previous attempt result:\n"
         f"- Attempt: {retry_context.attempt} of {retry_context.max_attempts}\n"
         "- Modified files:\n"
